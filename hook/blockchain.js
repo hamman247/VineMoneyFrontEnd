@@ -690,20 +690,26 @@ export const BlockchainContextProvider = ({ children }) => {
     ) {
       if (lock) return;
       setLock(true);
-      console.log("Getting data");
-      setBalance(fromBigNumber(result.data.value));
-      await getSystemInfo();
-      await getCollaterals();
-      await getBitUSDBalance();
-      await getBitGovBalance();
-      await getBitUSDCirculation();
-      await getStabilityPoolData();
-      await getBoostAmount();
-      // COMMENTED OUT UNTIL WE HAVE BITGOV AND REWARDS
-      await getClaimableRewards();
-      await getAccountWeight();
-      await getAccountBalances();
-      await getTotalWeight();
+      try {
+        console.log("Getting data");
+        setBalance(fromBigNumber(result.data.value));
+        await getSystemInfo();
+        await getCollaterals();
+        await getBitUSDBalance();
+        await getBitGovBalance();
+        await getBitUSDCirculation();
+        await getStabilityPoolData();
+        await getBoostAmount();
+        // COMMENTED OUT UNTIL WE HAVE BITGOV AND REWARDS
+        await getClaimableRewards();
+        await getAccountWeight();
+        await getAccountBalances();
+        await getTotalWeight();
+      } catch (error) {
+        console.error("Error fetching data:", error);
+      } finally {
+        setLock(false);
+      }
     }
   }, [
     account.address,
