@@ -84,6 +84,15 @@ export default function ManageDeposit({ address }) {
           ? await getTokenBalance(collaterals[address]?.collateral.address)
           : 0;
         setCollateralBalance(tokenBalance);
+      } else {
+        // Handle the case when the trove is closed
+        setCollateral(null);
+        setDeposits(0);
+        setDebt(0);
+        setStatus(0);
+        setCollateralAddr("");
+        setIsPayable(false);
+        setCollateralBalance(0);
       }
     }
     getDataWrapper();
@@ -468,6 +477,7 @@ export default function ManageDeposit({ address }) {
       } else {
         tooltip.success({ content: "Successful", duration: 5000 });
       }
+      await getData();
       setOperateType("Collateral");
       setOperateType2("Deposit");
       setButtonName("Deposit");
@@ -842,7 +852,7 @@ export default function ManageDeposit({ address }) {
         </div>
       ) : null}
 
-      {collateral.mcr === 0 ? <Loading></Loading> : null}
+      {collateral?.mcr === 0 ? <Loading></Loading> : null}
     </>
   );
 }
