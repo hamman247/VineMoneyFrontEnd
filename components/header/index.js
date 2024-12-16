@@ -25,7 +25,6 @@ export default function Header(props) {
   const [walletAvailability, setWalletAvailability] = useState({});
 
   const checkWalletAvailability = async (connector) => {
-    console.log('🚀 ~ checkWalletAvailability ~ connector:', connector);
     try {
       // Wait a small amount of time to allow wallet injection
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -35,13 +34,6 @@ export default function Header(props) {
 
       if (connector.name === 'MetaMask') {
         const hasMetaMask = window.ethereum?.isMetaMask === true;
-        console.log('🚀 ~ checkWalletAvailability ~ hasMetaMask:', hasMetaMask);
-
-        const metaMaskProvider = window.ethereum?.providers?.find(
-          (p) => p.isMetaMask === true
-        );
-        console.log('Found MetaMask provider:', !!metaMaskProvider);
-        console.log('🚀 ~ checkWalletAvailability ~ connector.ready:', connector.ready);
         return hasMetaMask;
       }
 
@@ -50,7 +42,6 @@ export default function Header(props) {
           (p) => p.isCoinbaseWallet === true
         );
         const hasCoinbase = !!coinbaseProvider;
-        console.log('🚀 ~ checkWalletAvailability ~ hasCoinbase:', hasCoinbase);
         return hasCoinbase;
       }
 
@@ -71,6 +62,15 @@ export default function Header(props) {
 
       const availabilityStatus = {};
       for (const connector of connectors) {
+        try {
+          const isReady = await connector.getProvider()
+            .then(() => true)
+            .catch(() => false);
+          console.log(`Connector ${connector.name} ready status:`, isReady);
+        } catch (error) {
+          console.log(`Connector ${connector.name} check failed:`, error);
+        }
+
         const isAvailable = await checkWalletAvailability(connector);
         availabilityStatus[connector.uid] = isAvailable;
         console.log(`${connector.name} final availability:`, isAvailable);
@@ -136,48 +136,6 @@ export default function Header(props) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [hasAttemptedSwitch, setHasAttemptedSwitch] = useState(false);
 
-  const handleChainAddition = async (provider) => {
-    try {
-      // Check if chain is already added
-      try {
-        const chain = await provider.request({
-          method: 'eth_chainId',
-          params: [],
-        });
-
-        if (chain === `0x${CHAIN_ID.SAPPHIRE_TESTNET.toString(16)}`) {
-          return true;
-        }
-      } catch (error) {
-        console.error('Error checking chain:', error);
-      }
-
-      // Add the network
-      await provider.request({
-        method: 'wallet_addEthereumChain',
-        params: [{
-          chainId: `0x${CHAIN_ID.SAPPHIRE_TESTNET.toString(16)}`,
-          chainName: 'Oasis Sapphire Testnet',
-          nativeCurrency: {
-            name: 'TEST',
-            symbol: 'TEST',
-            decimals: 18
-          },
-          rpcUrls: ['https://testnet.sapphire.oasis.dev'],
-          blockExplorerUrls: ['https://testnet.explorer.sapphire.oasis.dev']
-        }]
-      });
-
-      return true;
-    } catch (error) {
-      console.error('Error adding chain:', error);
-      if (error.code === 4001) {
-        throw new Error('User rejected adding the network');
-      }
-      throw error;
-    }
-  };
-
   const [isSigningTrove, setIsSigningTrove] = useState(false);
   const [isSigningToken, setIsSigningToken] = useState(false);
 
@@ -192,7 +150,9 @@ export default function Header(props) {
       if (connector.name === "Coinbase Wallet") {
         try {
           const provider = await connector.getProvider();
-          if (!provider) throw new Error('Unable to get Coinbase Wallet provider');
+          if (!provider) {
+            throw new Error('Unable to get Coinbase Wallet provider');
+          }
 
           const accounts = await provider.request({ method: 'eth_requestAccounts' });
           if (!accounts?.length) throw new Error('No accounts received');
@@ -211,7 +171,9 @@ export default function Header(props) {
               }]
             });
           } catch (error) {
-            if (!error.message.includes('already exists')) console.warn('Chain addition:', error);
+            if (!error.message.includes('already exists')) {
+              console.warn('Chain addition:', error);
+            }
           }
 
           try {
