@@ -21,22 +21,66 @@ export default function Header(props) {
       setOpenConnect(false);
     }
   });
-  useEffect(() => {
-    const checkConnectors = async () => {
-      for (const connector of connectors) {
-        try {
-          const isReady = await connector.getProvider()
-            .then(() => true)
-            .catch(() => false);
-          console.log(`Connector ${connector.name} ready status:`, isReady);
-        } catch (error) {
-          console.log(`Connector ${connector.name} check failed:`, error);
-        }
+
+  const [walletAvailability, setWalletAvailability] = useState({});
+
+  const checkWalletAvailability = async (connector) => {
+    console.log('🚀 ~ checkWalletAvailability ~ connector:', connector);
+    try {
+      // Wait a small amount of time to allow wallet injection
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Basic check for window.ethereum
+      if (!window.ethereum) return false;
+
+      if (connector.name === 'MetaMask') {
+        const hasMetaMask = window.ethereum?.isMetaMask === true;
+        console.log('🚀 ~ checkWalletAvailability ~ hasMetaMask:', hasMetaMask);
+
+        const metaMaskProvider = window.ethereum?.providers?.find(
+          (p) => p.isMetaMask === true
+        );
+        console.log('Found MetaMask provider:', !!metaMaskProvider);
+        console.log('🚀 ~ checkWalletAvailability ~ connector.ready:', connector.ready);
+        return hasMetaMask;
       }
+
+      if (connector.name === 'Coinbase Wallet') {
+        const coinbaseProvider = window.ethereum?.providers?.find(
+          (p) => p.isCoinbaseWallet === true
+        );
+        const hasCoinbase = !!coinbaseProvider;
+        console.log('🚀 ~ checkWalletAvailability ~ hasCoinbase:', hasCoinbase);
+        return hasCoinbase;
+      }
+
+      return false;
+    } catch (error) {
+      console.error(`Error checking ${connector.name} availability:`, error);
+      return false;
+    }
+  };
+
+  // The rest of your useEffect remains the same
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const checkConnectors = async () => {
+      await new Promise(res => setTimeout(res, 100));
+      if (!window.ethereum) return;
+
+      const availabilityStatus = {};
+      for (const connector of connectors) {
+        const isAvailable = await checkWalletAvailability(connector);
+        availabilityStatus[connector.uid] = isAvailable;
+        console.log(`${connector.name} final availability:`, isAvailable);
+      }
+      setWalletAvailability(availabilityStatus);
     };
 
     checkConnectors();
   }, [connectors]);
+
   const { disconnect } = useDisconnect();
   const { chains, switchChain } = useSwitchChain();
   const [openHealth, setOpenHealth] = useState(false);
@@ -134,108 +178,117 @@ export default function Header(props) {
     }
   };
 
+  const [isSigningTrove, setIsSigningTrove] = useState(false);
+  const [isSigningToken, setIsSigningToken] = useState(false);
+
   const handleConnect = async (connector) => {
     if (isConnecting) return;
 
     try {
       setIsConnecting(true);
+      localStorage.removeItem(`signInAuth-${account.chainId}`);
+      localStorage.removeItem(`signInToken-${account.chainId}`);
 
       if (connector.name === "Coinbase Wallet") {
         try {
-          // Get the provider
           const provider = await connector.getProvider();
+          if (!provider) throw new Error('Unable to get Coinbase Wallet provider');
 
-          if (!provider) {
-            throw new Error('Unable to get Coinbase Wallet provider');
-          }
-
-          // Try to add the chain first, but don't fail if it errors
-          try {
-            await handleChainAddition(provider);
-          } catch (error) {
-            // Log but don't throw for chain addition errors
-            console.warn('Chain addition warning:', error.message);
-            // Only throw if it's a user rejection
-            if (error.code === 4001) {
-              throw error;
-            }
-          }
-
-          // Request accounts first
           const accounts = await provider.request({ method: 'eth_requestAccounts' });
+          if (!accounts?.length) throw new Error('No accounts received');
 
-          if (!accounts || accounts.length === 0) {
-            throw new Error('No accounts received');
+          await connect({ connector, chainId: CHAIN_ID.SAPPHIRE_TESTNET });
+
+          try {
+            await provider.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: `0x${CHAIN_ID.SAPPHIRE_TESTNET.toString(16)}`,
+                chainName: 'Oasis Sapphire Testnet',
+                nativeCurrency: { name: 'TEST', symbol: 'TEST', decimals: 18 },
+                rpcUrls: ['https://testnet.sapphire.oasis.dev'],
+                blockExplorerUrls: ['https://testnet.explorer.sapphire.oasis.dev']
+              }]
+            });
+          } catch (error) {
+            if (!error.message.includes('already exists')) console.warn('Chain addition:', error);
           }
 
-          // Then attempt the wagmi connection
-          await connect({
-            connector,
-            chainId: CHAIN_ID.SAPPHIRE_TESTNET
-          });
-
-          // Wait a bit for the connection to be established
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          // Try switching to the correct chain
           try {
             await provider.request({
               method: 'wallet_switchEthereumChain',
-              params: [{ chainId: `0x${CHAIN_ID.SAPPHIRE_TESTNET.toString(16)}` }],
+              params: [{ chainId: `0x${CHAIN_ID.SAPPHIRE_TESTNET.toString(16)}` }]
             });
-          } catch (switchError) {
-            // Ignore switch errors - the chain might already be added
-            console.warn('Chain switch warning:', switchError.message);
+          } catch (error) {
+            console.warn('Chain switch:', error);
           }
 
           setOpenConnect(false);
+          setHasAttemptedSwitch(true);
+
+          // Clear auth states before refresh
+          setShowSignIn(false);
+          setShowSignInToken(false);
+
+          setTimeout(() => window.location.reload(), 1000);
 
         } catch (error) {
-          console.error('Coinbase connection error:', error);
-
-          // Only throw for actual connection errors
-          if (error.code === 4001) {
-            throw new Error('Connection rejected by user');
-          } else if (error.message?.includes('provider is undefined') ||
-            error.message?.includes('Unable to get Coinbase Wallet provider')) {
-            throw new Error('Please install the Coinbase Wallet extension or open in Coinbase Wallet browser');
-          } else if (!error.message?.includes('chain')) {
-            // Don't throw for chain-related errors
-            throw error;
-          }
-
-          if (error.message?.includes('chain')) {
-            setOpenConnect(false);
-          }
+          console.error('Coinbase error:', error);
+          handleConnectionError(error);
         }
       } else {
-        // Handle other wallets
-        await connect({
-          connector,
-          chainId: CHAIN_ID.SAPPHIRE_TESTNET
-        });
+        await connect({ connector, chainId: CHAIN_ID.SAPPHIRE_TESTNET });
         setOpenConnect(false);
+        setTimeout(() => window.location.reload(), 1000);
       }
 
     } catch (error) {
-      console.error('Connection error:', error);
-      let errorMessage = 'Failed to connect wallet. ';
-
-      if (error.code === 4001) {
-        errorMessage += 'User rejected the connection.';
-      } else if (error.message?.includes('provider')) {
-        errorMessage += 'Please install the Coinbase Wallet extension or open in Coinbase Wallet browser.';
-      } else {
-        errorMessage += error.message || 'Please try again.';
-      }
-
-      // Only show alert for non-chain-related errors
-      if (!error.message?.includes('chain')) {
-        alert(errorMessage);
-      }
-
+      handleConnectionError(error);
     } finally {
       setIsConnecting(false);
+    }
+  };
+
+  const handleSignTrove = async () => {
+    if (isSigningTrove) return;
+    try {
+      setIsSigningTrove(true);
+      await signTrove();
+      setShowSignIn(false);
+    } catch (error) {
+      console.error('Sign trove error:', error);
+    } finally {
+      setIsSigningTrove(false);
+    }
+  };
+
+  const handleSignToken = async () => {
+    if (isSigningToken) return;
+    try {
+      setIsSigningToken(true);
+      await signDebtToken();
+      setShowSignInToken(false);
+    } catch (error) {
+      console.error('Sign token error:', error);
+    } finally {
+      setIsSigningToken(false);
+    }
+  };
+
+  const handleConnectionError = (error) => {
+    console.error('Connection error:', error);
+    let errorMessage = 'Failed to connect wallet. ';
+
+    if (error.code === 4001) {
+      errorMessage += 'User rejected the connection.';
+    } else if (error.message?.includes('provider')) {
+      errorMessage += 'Please install the Coinbase Wallet extension or open in Coinbase Wallet browser.';
+    } else {
+      errorMessage += error.message || 'Please try again.';
+    }
+
+    if (!error.message?.includes('chain')) {
+      alert(errorMessage);
     }
   };
 
@@ -543,43 +596,66 @@ export default function Header(props) {
                 alt="close"
               />
             </div>
-            {connectors.map((connector) => (
-              <div
-                className="divBtn"
-                key={connector.uid}
-                onClick={() => {
-                  if (!isConnecting) {
-                    handleConnect(connector);
-                  }
-                }}
-                id={"connect-" + connector.id}
-                style={{
-                  opacity: isConnecting ? 0.5 : 1,
-                  cursor: isConnecting ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {connector.name === "Injected (Sapphire)"
-                  ? "Browser wallet (Sapphire)"
-                  : connector.name === "Injected"
-                    ? "Browser wallet"
-                    : connector.name}
-                {isConnecting && connector.name === "Coinbase Wallet" && " (Connecting...)"}
+            {connectors.map((connector) => {
+              const isAvailable = walletAvailability[connector.uid];
+              const isDisabled = !isAvailable || isConnecting;
 
-                {connector.name === "Coinbase Wallet" ? (
-                  <img
-                    className={styles.close}
-                    src="/icon/coinbase.svg"
-                    alt="close"
-                  />
-                ) : (
-                  <img
-                    className={styles.close}
-                    src="/icon/browserWallet.svg"
-                    alt="close"
-                    />
-                )}
-              </div>
-            ))}
+              return (
+                <div
+                  className="divBtn"
+                  key={connector.uid}
+                  onClick={() => {
+                    if (!isDisabled) {
+                      handleConnect(connector);
+                    }
+                  }}
+                  id={"connect-" + connector.id}
+                  style={{
+                    opacity: isDisabled ? 0.5 : 1,
+                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    position: 'relative'
+                  }}
+                >
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    width: '100%'
+                  }}>
+                    <div>
+                      {connector.name === "Injected (Sapphire)"
+                        ? "Browser wallet (Sapphire)"
+                        : connector.name === "Injected"
+                          ? "Browser wallet"
+                          : connector.name}
+                      {isConnecting && connector.name === "Coinbase Wallet" && " (Connecting...)"}
+                      {!isAvailable && (
+                        <span style={{
+                          fontSize: '0.8em',
+                          marginLeft: '8px',
+                          color: '#666'
+                        }}>
+                          (Not installed)
+                        </span>
+                      )}
+                    </div>
+                    {connector.name === "Coinbase Wallet" ? (
+                      <img
+                        className={styles.close}
+                        src="/icon/coinbase.svg"
+                        alt="close"
+                      />
+                    ) : (
+                      <img
+                        className={styles.close}
+                        src="/icon/browserWallet.svg"
+                        alt="close"
+                      />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
 
             {connectError && (
               <div style={{ color: 'red', marginTop: '10px', textAlign: 'center' }}>
@@ -689,9 +765,17 @@ export default function Header(props) {
               the signing process and enhance user experience, you are required
               to use EIP-712 to "sign in" once per day.
             </div>
-            <div className="button" onClick={() => signTrove()}>
-              Sign in
-            </div>
+            {showSignIn && (
+              <div className="button" onClick={handleSignTrove} disabled={isSigningTrove}>
+                {isSigningTrove ? "Signing..." : "Sign in"}
+              </div>
+            )}
+
+            {showSignInToken && (
+              <div className="button" onClick={handleSignToken} disabled={isSigningToken}>
+                {isSigningToken ? "Signing..." : "Sign in"}
+              </div>
+            )}
           </div>
         </div>
       ) : null}
