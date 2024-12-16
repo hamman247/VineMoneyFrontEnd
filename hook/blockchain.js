@@ -682,6 +682,8 @@ export const BlockchainContextProvider = ({ children }) => {
 
   // QUERY FUNCTIONS
   const getData = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+
     if (
       account.address &&
       signatureTrove?.user &&
